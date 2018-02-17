@@ -1,0 +1,105 @@
+---
+title: "Titanic"
+output: html_document
+---
+
+```{r}
+#loading the files
+train <- read.csv("C://Users//PC2//Downloads//train.csv")
+test <- read.csv("C://Users//PC2//Downloads//test.csv")
+test$Survived <- 0
+```
+
+
+```{r}
+#Analyzing data
+train[sample(nrow(train),10),]
+
+  #sibsp	# of siblings / spouses aboard the Titanic	
+  #parch	# of parents / children aboard the Titanic
+  #PClass pclass: A proxy for socio-economic status (SES) 1st = Upper 2nd = Middle 3rd = Lower
+  #embarked	Port of Embarkation	C = Cherbourg, Q = Queenstown, S = Southampton
+
+#getting number of missing values
+apply(is.na(train) | train == "" ,2, FUN = sum)
+apply(is.na(test) | test == "" ,2, FUN = sum)
+
+```
+```{r}
+#Dealing with missing values and Feature Engineering
+plot(train$Embarked)
+train$Embarked[train$Embarked == ""] <- 'S' # mostembarked from Southampton
+library(rpart)
+combine <- rbind(train,test)
+
+combine$Title <-  sapply(combine$Name, FUN = function(x){substr (strsplit(as.character(x), split = "[,.]")[[1]][2],2,nchar(as.character(x)))})
+
+#predicting Age
+model <- rpart(combine$Age~ combine$Survived + combine$Title + combine$Pclass + combine$Sex + combine$Parch + combine$SibSp + combine$Fare + combine$Embarked,data = combine[!is.na(combine),],method = "anova")
+#method - class for classificationa nd anova for regression
+combine$Age[is.na(combine$Age)] <- predict(model,newdata = combine[is.na(combine),])
+#too many missing age median not adequate
+
+combine[is.na(combine$Fare),]$Fare <- median(combine$Fare, na.rm = TRUE)
+```
+
+```{r}
+#More Feature Engineering
+combine$Title <- factor(combine$Title)
+plot(combine$Title)
+
+combine$Title <- as.character(combine$Title)
+combine$Title[combine$Title %in% c("Maj","Col","Capt","Don","Sir")] <- 'Male Aristocrat'
+combine$Title[combine$Title %in% c("Dona","Jonkheer","Lady","Don","the Countess")] <- 'Female Aristocrat'
+combine$Title[combine$Title %in% c("Mlle","Mme")] <- 'Madame'
+combine$Title <- factor(combine$Title)
+
+combine$Family <- combine$SibSp + combine$Parch + 1
+
+combine$FamilyName <- sapply(combine$Name, FUN = function(x){strsplit(as.character(x),",")[[1]][1]})
+
+n <- names(table(train$FamilyName)[table(train$FamilyName) == sapply(names(table(train$FamilyName)),FUN = function(x){as.numeric(strsplit(x, " ")[[1]][1])})])
+#train[train$FamilyName %in% n,] <- 'f'
+combine$FamilyName <- paste(combine$Family,combine$FamilyName)
+combine$FamilyName[combine$Family <=3] <- 'small' 
+combine$FamilyName <- factor(combine$FamilyName)
+```
+
+```{r}
+#Random Forest Predictor
+#train <- combine[1:nrow(train),]
+#test <- combine[(nrow(train) + 1):nrow(combine),]
+
+combine$Survived <- factor(combine$Survived)
+train<-combine[0:891,]
+testing <- combine[892:1309,]
+install.packages("randomForest")
+library(randomForest)
+set.seed(2378) 
+RFpredictor <- randomForest(Survived ~ Pclass + Sex + Age + Fare + Title + Family + FamilyName,data = train,importance = TRUE, ntree = 6000,nodesize = 20, OOB = T)
+
+prediction <- predict(RFpredictor,testing)
+
+varImpPlot(RFpredictor)
+submit <- data.frame(PassengerID = testing$PassengerId, Survived = prediction)
+write.csv(file = "submit.csv", submit, row.names = FALSE)
+```
+
+```{r}
+#Tuning Random Forest
+
+#1 Increase the numebr of trees to reduce noise
+#2 Increase the number of attributes in each tree
+#3 Increae the amount of data the leaf node can have
+
+#n_jobs to use multiple processors
+#
+
+install.packages("caret",dependencies = TRUE)
+library(caret)
+rf_model<-train(Survived ~ Pclass + Sex + Age + Fare + Title + Family,data=train,method="rf",
+                trControl=trainControl(method="cv",number=10),
+                prox=TRUE,allowParallel=TRUE)
+print(rf_model)
+
+```
